@@ -106,6 +106,12 @@ namespace ams::mitm::applet {
      * donor memory, then RunLive reattaches on the next present. nodethome
      * disables it. */
     extern bool g_detach_on_home;
+    /* exp/home-handoff-switchu: how long presents must stall before HOME
+     * detach (ms), and how long engines stay off after (ms). Defaults 200 /
+     * 2500 - upstream was 1000 / 5000, which left a long black flash when
+     * SwitchU Album races vi. Arm: homedetach= / homehold= */
+    extern u32 g_home_detach_ms;
+    extern u32 g_home_hold_ms;
     extern bool g_nv1080_armed;   /* M90: 1080p encoder probe (frame 0, GOP, timed) */
     extern u32  g_nv1080_n;
     extern bool g_anyfw_armed;    /* M98: capture on firmware this build was not tested on */

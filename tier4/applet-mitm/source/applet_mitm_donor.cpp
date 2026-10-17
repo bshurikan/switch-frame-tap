@@ -82,9 +82,16 @@ namespace ams::mitm::applet {
 
     namespace {
         constinit std::atomic<u64> g_hold_until_ns{0};
+        constinit u32 g_home_hold_ms_local = 2500;
     }
 
     bool AppletHoldActive() { return armTicksToNs(armGetSystemTick()) < g_hold_until_ns.load(std::memory_order_relaxed); }
+
+    void SetHomeHoldMs(u32 ms) {
+        if (ms < 500) { ms = 500; }
+        if (ms > 15000) { ms = 15000; }
+        g_home_hold_ms_local = ms;
+    }
 
     void PrepareForApplet(u32 applet_id) {
         const u64 t0 = armTicksToNs(armGetSystemTick());
@@ -107,11 +114,15 @@ namespace ams::mitm::applet {
         const u64 t0 = armTicksToNs(armGetSystemTick());
         /* Keep engines from remounting the donor while SwitchU / Album inits.
          * Viewer may still be connected; without this hold RunVicBlit sets up
-         * again immediately and the first Album launch OOMs. */
-        g_hold_until_ns.store(t0 + 5'000'000'000ull, std::memory_order_relaxed);
+         * again immediately and the first Album launch OOMs.
+         * exp/home-handoff-switchu: default 2.5 s (was 5 s) - long enough for
+         * SwitchU Album settle, short enough that FT-off HOME stays snappy. */
+        const u64 hold_ns = static_cast<u64>(g_home_hold_ms_local) * UINT64_C(1000000);
+        g_hold_until_ns.store(t0 + hold_ns, std::memory_order_relaxed);
         g_trigger_ns = t0;
         g_applet_needs_memory.store(true, std::memory_order_relaxed);
-        LogLine("home: detach-on-home - release capture memory for home menu (no engine re-setup for 5 s)");
+        LogLine("home: detach-on-home - release capture memory for home menu (no engine re-setup for %u ms)",
+                g_home_hold_ms_local);
     }
 
     void StartAppletWatch() {

@@ -88,6 +88,8 @@ namespace ams::mitm::applet {
      * HOME / Album is not fighting an active capture session. Set
      * detach_on_home=0 (arm "nodethome") to keep showing the suspended game. */
     constinit bool g_detach_on_home = true;
+    constinit u32  g_home_detach_ms = 200;
+    constinit u32  g_home_hold_ms   = 2500;
     constinit bool g_nv1080_armed  = false;
     constinit bool g_cap720_armed  = false;
     constinit bool g_anyfw_armed   = false;
@@ -6433,8 +6435,11 @@ namespace ams::mitm::applet {
                     const u64 qt = g_queue_tick.load(std::memory_order_relaxed);
                     if (qt != 0) {
                         const u64 age_ns = armTicksToNs(armGetSystemTick() - qt);
-                        if (age_ns >= UINT64_C(1000000000)) {
+                        const u64 stall_ns = static_cast<u64>(g_home_detach_ms) * UINT64_C(1000000);
+                        if (age_ns >= stall_ns) {
                             why = "HOME / game stopped presenting";
+                            LogLine("home: present stall %llu ms (threshold %u) - detach for Album/SwitchU",
+                                    static_cast<unsigned long long>(age_ns / 1000000), g_home_detach_ms);
                             PrepareForHomeMenu();
                             end = StreamEnd::GameGone;
                             break;
@@ -6881,11 +6886,14 @@ namespace ams::mitm::applet {
                     const u64 qt = g_queue_tick.load(std::memory_order_relaxed);
                     if (qt != 0) {
                         const u64 age_ns = armTicksToNs(armGetSystemTick() - qt);
-                        if (age_ns >= UINT64_C(1000000000)) {
+                        const u64 stall_ns = static_cast<u64>(g_home_detach_ms) * UINT64_C(1000000);
+                        if (age_ns >= stall_ns) {
                             why = "HOME / game stopped presenting";
                             /* Free the 42 MB donor before SwitchU Album inits,
                              * and hold re-setup so a connected viewer does not
                              * remount it mid-handoff. */
+                            LogLine("home: present stall %llu ms (threshold %u) - detach for Album/SwitchU",
+                                    static_cast<unsigned long long>(age_ns / 1000000), g_home_detach_ms);
                             PrepareForHomeMenu();
                             end = StreamEnd::GameGone;
                             break;

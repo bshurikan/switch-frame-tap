@@ -1,0 +1,24 @@
+exp/home-handoff-switchu (on v0.7.13+)
+=====================================
+
+Goal: shrink the HOME black flash when SwitchU is Album (010000000000100D).
+
+Upstream already ships detach_on_home default-on. The race is timing:
+  present stall (was 1 s) -> PrepareForHomeMenu hold (was 5 s) -> Album/vi init.
+
+This branch
+-----------
+- Present-stall threshold: 200 ms (arm/ini: homedetach= / home_detach_ms=)
+- No-reattach hold: 2500 ms (arm/ini: homehold= / home_hold_ms=)
+- Log lines: "home: present stall N ms ..." and hold duration in PrepareForHomeMenu
+
+Soak checklist
+--------------
+1. TotK + capture on + detach on; press HOME into SwitchU. Note black duration.
+2. Same with Sphaira / Castlevania.
+3. Confirm no 0xF601 / fatal; second HOME not required.
+4. Success: no black, or flash under ~100-200 ms with automatic recover.
+5. If still racing, try home_detach_ms=100 and/or home_hold_ms=3000 before
+   any SwitchU-side settle (#132). Keep FT-off HOME snappy.
+
+Correlate with SwitchU daemon.log MenuReady / gfx_fail timestamps.

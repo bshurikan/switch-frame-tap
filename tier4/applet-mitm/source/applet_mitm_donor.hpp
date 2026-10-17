@@ -34,9 +34,11 @@ namespace ams::mitm::applet {
     void PrepareForApplet(u32 applet_id);
     /* exp/detach-on-home: game stopped presenting (HOME / SwitchU). Force the
      * stream to give the donor's memory back immediately and hold engine
-     * re-setup for a few seconds so Album is not racing a 42 MB remount. */
+     * re-setup (g_home_hold_ms) so Album is not racing a 42 MB remount. */
     void PrepareForHomeMenu();
     bool AppletHoldActive();
+    /* Hold length used by PrepareForHomeMenu (set from g_home_hold_ms). */
+    void SetHomeHoldMs(u32 ms);
 
     /* sftap commands 10 / 11, from the donor */
     void DonorAccept(u64 size, os::NativeHandle tmem);
