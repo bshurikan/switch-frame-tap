@@ -36,6 +36,8 @@
  *                              # with network streaming on); --app finds it by itself
  *   ./raw-view --no-aspect-lock  # allow free resize (default locks the window to 16:9;
  *                              # viewer.ini lock_aspect=0 / Settings / A toggles it)
+ *   ./raw-view --chromeless    # borderless window; drag the picture to move (B / Settings;
+ *                              # viewer.ini chromeless=1). Still resizable from the edges.
  *   R records to MP4 (v0.5) in Videos/Switch Frame Tap: the console's H.264 as it
  *   arrived plus the game audio as AAC; --rec-dir DIR saves elsewhere, --mp4 FILE
  *   records into FILE from the start (tests)
@@ -126,6 +128,18 @@ static int g_win_w = 0, g_win_h = 0;  /* --window WxH: keep the window this size
  * fallback inside a free rectangle / non-16:9 monitors). Default on. */
 static int g_lock_aspect = 1;
 static int g_lock_aspect_cli = -1;   /* -1 = use prefs; 0/1 from --no-aspect-lock / --aspect-lock */
+/* Optional borderless window; drag the client area to move. Default off. */
+static int g_chromeless = 0;
+static int g_chromeless_cli = -1;
+static int g_drag_pending = 0, g_dragging = 0;
+static int g_drag_ox, g_drag_oy, g_drag_wx, g_drag_wy;
+
+static Uint32 video_window_flags(void)
+{
+    Uint32 f = VIDEO_WINDOW_FLAGS;
+    if (g_chromeless) f |= SDL_WINDOW_BORDERLESS;
+    return f;
+}
 
 #ifdef _WIN32
 static WNDPROC g_prev_wndproc;
@@ -142,6 +156,28 @@ static void aspect_borders(HWND hwnd, int *bw, int *bh)
 
 static LRESULT CALLBACK aspect_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    /* Borderless: 8px edges still resize (no title-bar chrome). */
+    if (msg == WM_NCHITTEST && g_chromeless) {
+        LRESULT hit = CallWindowProc(g_prev_wndproc, hwnd, msg, wp, lp);
+        if (hit == HTCLIENT) {
+            POINT pt = { (short)LOWORD(lp), (short)HIWORD(lp) };
+            RECT cr;
+            GetClientRect(hwnd, &cr);
+            ScreenToClient(hwnd, &pt);
+            const int edge = 8;
+            const int left = pt.x < edge, right = pt.x >= cr.right - edge;
+            const int top = pt.y < edge, bottom = pt.y >= cr.bottom - edge;
+            if (top && left) return HTTOPLEFT;
+            if (top && right) return HTTOPRIGHT;
+            if (bottom && left) return HTBOTTOMLEFT;
+            if (bottom && right) return HTBOTTOMRIGHT;
+            if (left) return HTLEFT;
+            if (right) return HTRIGHT;
+            if (top) return HTTOP;
+            if (bottom) return HTBOTTOM;
+        }
+        return hit;
+    }
     if (msg == WM_SIZING && g_lock_aspect) {
         RECT *r = (RECT *)lp;
         int bw = 0, bh = 0;
@@ -418,6 +454,7 @@ static void prefs_load(void)
         if (sscanf(line, "fsr_sharpness=%d", &hm) == 1 && hm >= 0 && hm <= 100) g_fsr_sharpness = hm;
         if (sscanf(line, "hwdec=%d", &hm) == 1) g_hwdec = hm != 0;
         if (sscanf(line, "lock_aspect=%d", &hm) == 1) g_lock_aspect = hm != 0;
+        if (sscanf(line, "chromeless=%d", &hm) == 1) g_chromeless = hm != 0;
         if (sscanf(line, "picture=%127s", v) == 1) pic_parse(v);
     }
     fclose(f);
@@ -429,7 +466,7 @@ static void prefs_save(void)
     prefs_path(path, sizeof(path));
     FILE *f = fopen(path, "w");
     if (!f) return;
-    fprintf(f, "connection=%s\nlast_ip=%s\nstats_overlay=%d\nvsync=%d\nupscaler=%s\nhwdec=%d\nlock_aspect=%d\npicture=%d,%d,%d,%d,%d\n", g_conn == CONN_NET ? "network" : "usb", g_last_ip, g_hud, g_vsync, up_key[g_upscaler], g_hwdec, g_lock_aspect,
+    fprintf(f, "connection=%s\nlast_ip=%s\nstats_overlay=%d\nvsync=%d\nupscaler=%s\nhwdec=%d\nlock_aspect=%d\nchromeless=%d\npicture=%d,%d,%d,%d,%d\n", g_conn == CONN_NET ? "network" : "usb", g_last_ip, g_hud, g_vsync, up_key[g_upscaler], g_hwdec, g_lock_aspect, g_chromeless,
             g_pic.bright, g_pic.contrast, g_pic.sat, g_pic.gamma10, g_pic.sharp);
     fprintf(f, "fsr_sharpness=%d\n", g_fsr_sharpness);
     fclose(f);
@@ -988,7 +1025,7 @@ static void ren_swap(SDL_Window **winp, SDL_Renderer **renp, SDL_Texture **texp)
         SDL_GetWindowSize(win, &w, &h);
         snprintf(title, sizeof(title), "%s", SDL_GetWindowTitle(win));
         SDL_DestroyWindow(win);
-        win = SDL_CreateWindow(title, x, y, w, h, VIDEO_WINDOW_FLAGS |
+        win = SDL_CreateWindow(title, x, y, w, h, video_window_flags() |
                                (fl & (SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MAXIMIZED)));
         *winp = win;
         if (!win) { fprintf(stderr, "\nSDL window: %s\n", SDL_GetError()); g_quit = 1; return; }
@@ -1090,6 +1127,24 @@ static void act_lock_aspect(SDL_Window *win, int on)
     fprintf(stderr, "\naspect lock %s\n", g_lock_aspect ? "on" : "off");
 }
 
+static void apply_chromeless(SDL_Window *win)
+{
+    if (!win) return;
+    SDL_SetWindowBordered(win, g_chromeless ? SDL_FALSE : SDL_TRUE);
+    aspect_hook_window(win);
+    if (g_lock_aspect) aspect_constrain_window(win);
+}
+
+static void act_chromeless(SDL_Window *win, int on)
+{
+    g_chromeless = on != 0;
+    g_drag_pending = g_dragging = 0;
+    prefs_save();
+    apply_chromeless(win);
+    hud_toast(g_chromeless ? "Borderless on - drag the picture to move" : "Window frame on");
+    fprintf(stderr, "\nchromeless %s\n", g_chromeless ? "on" : "off");
+}
+
 static void act_upscaler(SDL_Renderer *ren, int mode)   /* -1 = the next one */
 {
     char t[112];
@@ -1123,6 +1178,13 @@ static void act_hwdec(int on)
 
 #include "ui.h"                /* v0.7.12: the home screen and the settings drawer */
 
+static int chromeless_can_drag(SDL_Window *win)
+{
+    if (!g_chromeless || !win || g_ui_open || g_ip_editing) return 0;
+    const Uint32 fl = SDL_GetWindowFlags(win);
+    return (fl & (SDL_WINDOW_FULLSCREEN_DESKTOP | SDL_WINDOW_MAXIMIZED)) == 0;
+}
+
 static void app_events(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex)
 {
     g_ui_win = win;
@@ -1135,8 +1197,37 @@ static void app_events(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex)
         if (e.type == SDL_KEYDOWN && (e.key.keysym.sym > 0x7f || e.key.keysym.sym == SDLK_UNKNOWN) &&
             e.key.keysym.scancode >= SDL_SCANCODE_A && e.key.keysym.scancode <= SDL_SCANCODE_Z)
             e.key.keysym.sym = SDLK_a + (e.key.keysym.scancode - SDL_SCANCODE_A);
+        /* Borderless: drag the picture (or home screen) to move the window. */
+        if (g_dragging || g_drag_pending) {
+            if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_LEFT) {
+                g_dragging = g_drag_pending = 0;
+                continue;
+            }
+            if (e.type == SDL_MOUSEMOTION && (e.motion.state & SDL_BUTTON_LMASK) && chromeless_can_drag(win)) {
+                int mx, my;
+                SDL_GetGlobalMouseState(&mx, &my);
+                if (g_drag_pending && !g_dragging) {
+                    const int dx = e.motion.xrel, dy = e.motion.yrel;
+                    if (dx * dx + dy * dy >= 4) g_dragging = 1;
+                }
+                if (g_dragging) SDL_SetWindowPosition(win, mx - g_drag_ox, my - g_drag_oy);
+                continue;
+            }
+            if (e.type == SDL_KEYDOWN || e.type == SDL_MOUSEBUTTONDOWN)
+                g_dragging = g_drag_pending = 0;
+        }
         /* v0.7.12: the settings drawer and the mouse first */
         if (!g_ip_editing && ui_event(win, ren, &e)) { if (g_menu) menu_draw(ren); continue; }
+        if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && e.button.clicks == 1 &&
+            chromeless_can_drag(win)) {
+            int mx, my;
+            SDL_GetGlobalMouseState(&mx, &my);
+            SDL_GetWindowPosition(win, &g_drag_wx, &g_drag_wy);
+            g_drag_ox = mx - g_drag_wx;
+            g_drag_oy = my - g_drag_wy;
+            g_drag_pending = 1;
+            g_dragging = 0;
+        }
         /* v0.7: typing the Switch's address (I) takes every key */
         if (g_ip_editing) {
             if (e.type == SDL_TEXTINPUT) {
@@ -1177,6 +1268,7 @@ static void app_events(SDL_Window *win, SDL_Renderer *ren, SDL_Texture *tex)
         else if (key == SDLK_o || key == SDLK_F3) act_hud(-1);
         else if (key == SDLK_v) { act_vsync(ren, !g_vsync); if (g_menu) menu_draw(ren); }
         else if (key == SDLK_a) { act_lock_aspect(win, !g_lock_aspect); if (g_menu) menu_draw(ren); }
+        else if (key == SDLK_b) { act_chromeless(win, !g_chromeless); if (g_menu) menu_draw(ren); }
         else if (key == SDLK_u) { act_upscaler(ren, -1); if (g_menu) menu_draw(ren); }
 #ifdef __APPLE__
         else if (key == SDLK_F9) {
@@ -1426,7 +1518,7 @@ static int run_live(libusb_context *ctx, SDL_Window *win, SDL_Renderer *ren, int
         SDL_SetYUVConversionMode(SDL_YUV_CONVERSION_BT709);
         SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
         win = SDL_CreateWindow("Switch Frame Tap", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                               1280, 720, VIDEO_WINDOW_FLAGS);
+                               1280, 720, video_window_flags());
         aspect_hook_window(win);
         ren = win ? SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : NULL;
         if (!ren) { fprintf(stderr, "SDL window: %s\n", SDL_GetError()); return 1; }
@@ -1727,10 +1819,13 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--net") && i + 1 < argc) net_host = argv[++i];
         else if (!strcmp(argv[i], "--no-aspect-lock")) g_lock_aspect_cli = 0;
         else if (!strcmp(argv[i], "--aspect-lock")) g_lock_aspect_cli = 1;
+        else if (!strcmp(argv[i], "--chromeless")) g_chromeless_cli = 1;
+        else if (!strcmp(argv[i], "--no-chromeless")) g_chromeless_cli = 0;
         else { fprintf(stderr, "unknown option %s (see the comment at the top of raw-view.c)\n", argv[i]); return 2; }
     }
     if (scale < 1) scale = 1;
     if (g_lock_aspect_cli >= 0) g_lock_aspect = g_lock_aspect_cli;
+    if (g_chromeless_cli >= 0) g_chromeless = g_chromeless_cli;
 #ifdef _WIN32
     /* double-clicked from Explorer: the app mode */
     if (argc == 1) g_app = 1;
@@ -1770,8 +1865,9 @@ int main(int argc, char **argv)
         prefs_load();                      /* v0.7: USB or network, the last address; v0.7.11: before the renderer */
         if (g_lock_aspect_cli >= 0) g_lock_aspect = g_lock_aspect_cli;
         up_pick_renderer();
+        if (g_chromeless_cli >= 0) g_chromeless = g_chromeless_cli;
         win = SDL_CreateWindow("Switch Frame Tap", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                               1280, 720, VIDEO_WINDOW_FLAGS);
+                               1280, 720, video_window_flags());
         aspect_hook_window(win);
         ren = win ? SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC) : NULL;
         if (!ren) {
@@ -1969,7 +2065,7 @@ int main(int argc, char **argv)
             /* the stream is BT.709 limited range (VUI says so too) */
             SDL_SetYUVConversionMode(SDL_YUV_CONVERSION_BT709);
             win = SDL_CreateWindow("switch-frame-tap", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                   (int)(hdr.width*scale), (int)(hdr.height*scale), VIDEO_WINDOW_FLAGS);
+                                   (int)(hdr.width*scale), (int)(hdr.height*scale), video_window_flags());
             aspect_hook_window(win);
             /* M86b: SDL scales nearest-neighbour by default, which made edges
              * look pixelated in a resized or maximized window. Linear, and keep

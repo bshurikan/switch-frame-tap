@@ -1,7 +1,7 @@
 /* ui.h - v0.7.12: the viewer's look. One home screen while there is no
  * picture, and one settings drawer (Esc, or the Settings button) with every
  * option in it, over the home screen or over the game - mouse or keys. The
- * old shortcuts (R, M, F11, Tab, I, O, V, A, U) still work; P opens the drawer at
+ * old shortcuts (R, M, F11, Tab, I, O, V, A, B, U) still work; P opens the drawer at
  * the picture controls.
  *
  * Immediate mode: every draw lays the controls out again and remembers where
@@ -28,7 +28,7 @@ static float g_ui_k = 1, g_ui_w = 1280;    /* units -> logical, and the width in
 static int g_ui_scroll_to = -1;            /* bring this row into view at the next draw */
 static SDL_Window *g_ui_win = NULL;        /* for the fullscreen switch's state (app_events sets it) */
 
-enum { H_NONE, H_SETTINGS, H_CLOSE, H_BACKDROP, H_CONN, H_IP, H_FULL, H_VSYNC, H_ASPECT, H_UPS, H_HUD, H_HWDEC,
+enum { H_NONE, H_SETTINGS, H_CLOSE, H_BACKDROP, H_CONN, H_IP, H_FULL, H_VSYNC, H_ASPECT, H_CHROMELESS, H_UPS, H_HUD, H_HWDEC,
        H_PIC, H_PIC_RESET, H_SOUND, H_REC, H_PANEL, H_FSR_SHARP, H_SUPPORT };
 
 typedef struct { SDL_FRect r; int id, arg; } ui_hit_t;
@@ -272,6 +272,10 @@ static void ui_drawer(SDL_Renderer *ren, float W)
         ui_row(H_ASPECT, 0, y, h);
         ui_label(ren, cx, y, h, "Lock aspect ratio", g_lock_aspect ? "Window stays 16:9 while resizing (A)" : "Free resize; picture letterboxed (A)", ui_focused(H_ASPECT, 0), cw);
         ui_toggle(ren, xr, y + 12, g_lock_aspect, H_ASPECT, 1);
+        y += h + 4;
+        ui_row(H_CHROMELESS, 0, y, h);
+        ui_label(ren, cx, y, h, "Borderless window", g_chromeless ? "No title bar; drag the picture to move (B)" : "Normal window frame (B)", ui_focused(H_CHROMELESS, 0), cw);
+        ui_toggle(ren, xr, y + 12, g_chromeless, H_CHROMELESS, 1);
         y += h + 4;
         ui_row(H_HWDEC, 0, y, h);
         char dec[64];
@@ -652,6 +656,7 @@ static void ui_change(SDL_Window *win, SDL_Renderer *ren, int id, int arg, int d
     case H_FULL: act_fullscreen(win); break;
     case H_VSYNC: act_vsync(ren, !g_vsync); break;
     case H_ASPECT: act_lock_aspect(win, !g_lock_aspect); break;
+    case H_CHROMELESS: act_chromeless(win, !g_chromeless); break;
     case H_HWDEC: act_hwdec(!g_hwdec); break;
     case H_UPS: act_upscaler(ren, d < 0 ? (g_upscaler + UP_COUNT - 1) % UP_COUNT : (g_upscaler + 1) % UP_COUNT); break;
     case H_HUD: act_hud(d < 0 ? (g_hud + HUD_MODES - 1) % HUD_MODES : (g_hud + 1) % HUD_MODES); break;
@@ -723,6 +728,7 @@ static int ui_event(SDL_Window *win, SDL_Renderer *ren, const SDL_Event *e)
             case H_FULL: act_fullscreen(win); break;
             case H_VSYNC: act_vsync(ren, h->arg); break;
             case H_ASPECT: act_lock_aspect(win, h->arg); break;
+            case H_CHROMELESS: act_chromeless(win, h->arg); break;
             case H_HWDEC: act_hwdec(h->arg); break;
             case H_UPS: act_upscaler(ren, h->arg); break;
             case H_HUD: act_hud(h->arg); break;

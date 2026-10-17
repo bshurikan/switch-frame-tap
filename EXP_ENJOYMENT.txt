@@ -1,0 +1,26 @@
+exp/enjoyment — kitchen-sink soak build
+=======================================
+
+Like SwitchU's enjoyment build: latest upstream master plus the local
+improvements that are still on fork branches (not upstream PRs yet).
+
+Included (on top of origin/master)
+----------------------------------
+1. Faster HOME handoff for SwitchU Album (stall 200 ms / hold 2.5 s)
+2. Ethernet / mid-join network tweaks (auto-IDR, wired GOP 60, TCP tx 320 KB)
+3. Gated SwitchU Album 100D probe (capture_album=1 — no surface path yet)
+4. Windows viewer: 16:9 aspect lock + optional chromeless / drag-to-move
+
+Not included (already upstream)
+-------------------------------
+- detach_on_home default-on (PR #13) — already in master
+
+Build
+-----
+  build_enjoyment.bat     → SD payload to build\sd_out
+  build_windows_viewer.bat → SwitchFrameTap.exe (auto-downloads ref\win)
+
+Config notes
+------------
+- capture_album = 1   only for the 100D probe soak (default off)
+- chromeless: Settings / B / viewer.ini chromeless=1
