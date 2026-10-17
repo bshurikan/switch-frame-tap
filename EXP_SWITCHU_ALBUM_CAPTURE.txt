@@ -1,0 +1,31 @@
+exp/switchu-album-capture (on v0.7.13+)
+=======================================
+
+Goal: stream SwitchU HOME (Library Applet 010000000000100D).
+
+Hard: stock FT follows application presents. Album is not an application.
+This branch is a gated spike only - no surface capture yet.
+
+Enable
+------
+config.ini:  capture_album = 1
+arm token:   capalbum
+Default: off.
+
+What it does
+------------
+1. While live is waiting for a game and no application is up, poll
+   pm:dmnt GetProcessId(100D).
+2. Log when Album/SwitchU appears/disappears.
+3. Periodically try DmAttach + DbgResume + DbgDetach (proves attach is
+   possible without leaving SwitchU halted).
+4. Log CreateLibraryApplet ids when capalbum is on (archaeology - 100D
+   may never go through that path when Atmosphere replaces Album).
+
+Not yet
+-------
+- vi / layer / surface attach for applet frames
+- Reattach to game when leaving SwitchU (game path already works)
+
+Soak with capture_album=1: confirm logs, no 0xF601, game reattach still clean.
+Only then invest in a real layer path.

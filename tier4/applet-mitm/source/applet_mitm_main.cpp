@@ -548,6 +548,7 @@ namespace ams {
             mitm::applet::g_nvab_armed = mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "nvab");
             /* on unless config sets detach_on_home=0 (nodethome) */
             mitm::applet::g_detach_on_home = !mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "nodethome");
+            mitm::applet::g_capture_album = mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "capalbum");
             g_screen_off.store(mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "screenoff"), std::memory_order_relaxed);
             mitm::applet::g_early_collect = mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "earlyoff") ? 0
                                           : mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "earlyab") ? 2 : 1;
@@ -1018,6 +1019,7 @@ namespace ams {
         mitm::applet::g_nvab_armed    = ArmFileContains("nvab");
         mitm::applet::g_live_armed    = ArmFileContains("live");
         mitm::applet::g_detach_on_home = !ArmFileContains("nodethome");
+        mitm::applet::g_capture_album = ArmFileContains("capalbum");
         g_screen_off.store(ArmFileContains("screenoff"), std::memory_order_relaxed);
         mitm::applet::g_early_collect = ArmFileContains("earlyoff") ? 0 : ArmFileContains("earlyab") ? 2 : 1;
         mitm::applet::g_nv1080_armed  = ArmFileContains("nv1080");
@@ -1071,6 +1073,8 @@ namespace ams {
                               mitm::applet::g_probe_delay_s);
         mitm::applet::LogLine("detach-on-home=%s (exp: end session when presents stall ~1s; config detach_on_home=0 to keep)",
                               mitm::applet::g_detach_on_home ? "on" : "off");
+        mitm::applet::LogLine("capture_album=%s (exp: probe 100D / SwitchU while no game; default off)",
+                              mitm::applet::g_capture_album ? "on" : "off");
         if ((mitm::applet::g_jpgdec_armed || mitm::applet::g_nvgrc_armed ||
              mitm::applet::g_csc_armed || mitm::applet::g_nvframe_armed || mitm::applet::g_nvstream_armed ||
              mitm::applet::g_nvp_armed) && !mitm::applet::g_vic_armed) {

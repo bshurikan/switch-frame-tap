@@ -88,6 +88,7 @@ namespace ams::mitm::applet {
      * HOME / Album is not fighting an active capture session. Set
      * detach_on_home=0 (arm "nodethome") to keep showing the suspended game. */
     constinit bool g_detach_on_home = true;
+    constinit bool g_capture_album = false;
     constinit bool g_nv1080_armed  = false;
     constinit bool g_cap720_armed  = false;
     constinit bool g_anyfw_armed   = false;
@@ -2850,6 +2851,43 @@ namespace ams::mitm::applet {
                     continue;
                 }
                 if (!have_app || pid.value == skip_pid || !presenting) {
+                    /* exp/switchu-album-capture: SwitchU / stock Album is
+                     * 010000000000100D (Library Applet), not an application.
+                     * When capture_album is on, probe for it and try a debug
+                     * attach. Surface/layer capture is not wired yet - this
+                     * spike proves detection without breaking game detach. */
+                    if (g_capture_album && !have_app) {
+                        static constexpr u64 AlbumProgramId = 0x010000000000100Dull;
+                        static u64 album_said_pid = 0;
+                        static u64 album_last_try_ns = 0;
+                        os::ProcessId album{};
+                        const Result arc = ::ams::pm::dmnt::GetProcessId(std::addressof(album), ncm::ProgramId{AlbumProgramId});
+                        if (R_SUCCEEDED(arc)) {
+                            if (album.value != album_said_pid) {
+                                LogLine("   capture_album: Album/SwitchU 100D is up pid=%llu - attach spike (no surface path yet)",
+                                        static_cast<unsigned long long>(album.value));
+                                album_said_pid = album.value;
+                            }
+                            const u64 now = armTicksToNs(armGetSystemTick());
+                            if (now - album_last_try_ns >= UINT64_C(3000000000)) {
+                                album_last_try_ns = now;
+                                ::ams::svc::Handle adbg = ::ams::svc::InvalidHandle;
+                                if (DmAttach(album.value, std::addressof(adbg))) {
+                                    u32 nev = 0;
+                                    const Result rcv = DbgResume(adbg, std::addressof(nev));
+                                    LogLine("   capture_album: debug attach to 100D ok (resume rc=0x%x, %u events) - LocateSwapchain/layer TODO; releasing",
+                                            rcv.GetValue(), nev);
+                                    DbgDetach(adbg);
+                                } else {
+                                    LogLine("   capture_album: debug attach to 100D failed (expected until album path exists)");
+                                }
+                            }
+                        } else if (album_said_pid != 0) {
+                            LogLine("   capture_album: Album/SwitchU 100D gone (was pid %llu)",
+                                    static_cast<unsigned long long>(album_said_pid));
+                            album_said_pid = 0;
+                        }
+                    }
                     g_live_state.store(LiveState_WaitGame, std::memory_order_relaxed);
                     SetViewerReason(!have_app ? ViewerReason_NoGame : (pid.value == skip_pid ? ViewerReason_NotFound : ViewerReason_GameHidden));
                     /* v0.7.11: not drawing (HOME menu) or no game: the donor's
