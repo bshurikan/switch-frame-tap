@@ -1,0 +1,15 @@
+exp/viewer-aspect-lock (on v0.7.13+)
+====================================
+
+Goal: keep the Windows (and other) viewer window at 16:9 while dragging
+the resize border - not only letterbox inside a free rectangle.
+
+Changes
+-------
+- Windows: WM_SIZING subclass locks client area to 16:9 while dragging
+- All platforms: snap on SIZE_CHANGED / RESIZED as fallback
+- Default on; viewer.ini lock_aspect=0|1; Settings toggle; A key;
+  --no-aspect-lock / --aspect-lock
+- Letterbox draw path unchanged (non-16:9 monitors still get bars)
+
+Candidate for early upstream PR after a quick Windows resize soak.
