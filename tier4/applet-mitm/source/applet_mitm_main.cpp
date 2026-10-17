@@ -555,6 +555,7 @@ namespace ams {
                 if (h >= 500 && h <= 15000) { mitm::applet::g_home_hold_ms = h; }
                 mitm::applet::SetHomeHoldMs(mitm::applet::g_home_hold_ms);
             }
+            mitm::applet::g_capture_album = mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "capalbum");
             g_screen_off.store(mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "screenoff"), std::memory_order_relaxed);
             mitm::applet::g_early_collect = mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "earlyoff") ? 0
                                           : mitm::applet::armfile::Contains(g_arm_buf, g_arm_len, "earlyab") ? 2 : 1;
@@ -1032,6 +1033,7 @@ namespace ams {
             if (h >= 500 && h <= 15000) { mitm::applet::g_home_hold_ms = h; }
             mitm::applet::SetHomeHoldMs(mitm::applet::g_home_hold_ms);
         }
+        mitm::applet::g_capture_album = ArmFileContains("capalbum");
         g_screen_off.store(ArmFileContains("screenoff"), std::memory_order_relaxed);
         mitm::applet::g_early_collect = ArmFileContains("earlyoff") ? 0 : ArmFileContains("earlyab") ? 2 : 1;
         mitm::applet::g_nv1080_armed  = ArmFileContains("nv1080");
@@ -1086,6 +1088,8 @@ namespace ams {
         mitm::applet::LogLine("detach-on-home=%s (stall %u ms, hold %u ms; nodethome / home_detach_ms / home_hold_ms)",
                               mitm::applet::g_detach_on_home ? "on" : "off",
                               mitm::applet::g_home_detach_ms, mitm::applet::g_home_hold_ms);
+        mitm::applet::LogLine("capture_album=%s (exp: probe 100D / SwitchU while no game; default off)",
+                              mitm::applet::g_capture_album ? "on" : "off");
         if ((mitm::applet::g_jpgdec_armed || mitm::applet::g_nvgrc_armed ||
              mitm::applet::g_csc_armed || mitm::applet::g_nvframe_armed || mitm::applet::g_nvstream_armed ||
              mitm::applet::g_nvp_armed) && !mitm::applet::g_vic_armed) {

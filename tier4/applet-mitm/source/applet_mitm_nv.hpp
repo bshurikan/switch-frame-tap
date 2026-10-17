@@ -112,6 +112,10 @@ namespace ams::mitm::applet {
      * SwitchU Album races vi. Arm: homedetach= / homehold= */
     extern u32 g_home_detach_ms;
     extern u32 g_home_hold_ms;
+    /* exp/switchu-album-capture: when set (arm "capalbum" / capture_album=1),
+     * look for Library Applet title 010000000000100D (stock Album or SwitchU)
+     * while no application is presenting. Default off - vi is sensitive. */
+    extern bool g_capture_album;
     extern bool g_nv1080_armed;   /* M90: 1080p encoder probe (frame 0, GOP, timed) */
     extern u32  g_nv1080_n;
     extern bool g_anyfw_armed;    /* M98: capture on firmware this build was not tested on */

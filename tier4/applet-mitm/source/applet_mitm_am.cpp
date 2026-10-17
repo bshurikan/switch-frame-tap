@@ -1,6 +1,7 @@
 #include "applet_mitm_am.hpp"
 #include "applet_mitm_donor.hpp"
 #include "applet_mitm_log.hpp"
+#include "applet_mitm_nv.hpp"
 
 namespace ams::mitm::applet {
 
@@ -124,6 +125,11 @@ namespace ams::mitm::applet {
         AMS_UNUSED(mode);
         /* the stream stops and the donor's memory is back before am starts it */
         if (IsBrowserApplet(applet_id)) { PrepareForApplet(applet_id); }
+        /* exp/switchu-album-capture: log every library applet when probing HOME.
+         * Album/SwitchU as title 100D may not go through this path at all. */
+        if (g_capture_album) {
+            LogLine("am: CreateLibraryApplet id=%#x (capture_album on - 100D may be a process, not this)", applet_id);
+        }
         /* the request itself goes to am unchanged (from the saved message) */
         R_THROW(sm::mitm::ResultShouldForwardToSession());
     }
