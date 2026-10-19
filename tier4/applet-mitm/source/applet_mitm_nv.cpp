@@ -3471,10 +3471,10 @@ namespace ams::mitm::applet {
                     for (;;) { static_cast<void>(UsbViewerPresent(300)); os::SleepThread(TimeSpan::FromSeconds(2)); }
                 }
                 /* v0.7.10: an applet is starting - give the donor's memory back now.
-                 * With home_menu on, stay in RunLive for Album/SwitchU. Only arm the
-                 * hold / release while capture is still mapped: PrepareForHomeMenu
-                 * sets g_applet_needs_memory, so calling it every loop extended the
-                 * remount hold forever (black screen, never attach to 100D). */
+                 * CaptureRelease alone only clears g_ind_buf; the donor stays
+                 * mapped (~41 MB). SwitchU then launches into ~1 MB free
+                 * (466/467), dies, and return-from-app is a black screen.
+                 * Close engines so DonorRelease actually unmaps. */
                 if (g_applet_needs_memory.load(std::memory_order_relaxed) && g_donor_mode) {
                     const bool held = (g_ind_buf != nullptr || g_capture_handles != 0);
                     if (held) {
@@ -3482,20 +3482,20 @@ namespace ams::mitm::applet {
                         CaptureRelease("live");
                     }
                     if (g_ind_buf == nullptr && g_capture_handles == 0) {
-                        if (g_ui_stream_armed) {
-                            g_applet_needs_memory.store(false, std::memory_order_relaxed);
-                            static bool said_applet_ui = false;
-                            if (!said_applet_ui) {
-                                LogLine("   live: an applet needs the memory - freed; staying live for Album/SwitchU / HOME menu");
-                                said_applet_ui = true;
-                            }
-                            said_wait_game = false;
-                            os::SleepThread(TimeSpan::FromMilliSeconds(200));
-                            continue;
-                        }
+                        g_applet_needs_memory.store(false, std::memory_order_relaxed);
                         LogLine("   live: an applet needs the memory - closing the engines now");
                         return;
                     }
+                }
+                /* Same: 100D up while donor still mapped after a soft HOME free. */
+                if (g_donor_mode && g_ui_stream_armed && DonorActive() && AlbumSwitchURunning()) {
+                    if (g_ind_buf != nullptr || g_capture_handles != 0) {
+                        PrepareForHomeMenu();
+                        CaptureRelease("live");
+                    }
+                    g_applet_needs_memory.store(false, std::memory_order_relaxed);
+                    LogLine("   live: Album/SwitchU (100D) is up - closing engines so it gets the Applet pool (donor was still mapped)");
+                    return;
                 }
                 UsbFollowStreamSwitch();
                 /* M99: a screenshot while not streaming: attach just for it */
@@ -3573,12 +3573,12 @@ namespace ams::mitm::applet {
                             said_wait_game = false;
                             continue;
                         }
-                        /* home_menu on but UI could not start: free on confirm so
-                         * SwitchU / Album is not racing a mapped donor; stay in
-                         * RunLive so 100D presents can attach like a game. */
+                        /* home_menu: UI could not start (no vi buffer). Soft-release
+                         * the capture region and wait; if 100D appears the check
+                         * above closes engines so SwitchU is not racing a mapped donor. */
                         if (g_donor_mode && g_detach_on_home) {
                             const char *ui_why = nullptr;
-                            if (HomeDetachShouldFire(50, g_home_detach_ms, g_home_fallback_ms, std::addressof(ui_why))) {
+                            if (HomeDetachShouldFire(g_home_detach_ms, g_home_detach_ms, g_home_fallback_ms, std::addressof(ui_why))) {
                                 const bool held = (g_ind_buf != nullptr || g_capture_handles != 0);
                                 if (held) {
                                     PrepareForHomeMenu();
@@ -3588,7 +3588,7 @@ namespace ams::mitm::applet {
                                     g_applet_needs_memory.store(false, std::memory_order_relaxed);
                                     static bool said_ui_album = false;
                                     if (!said_ui_album) {
-                                        LogLine("   live: home_menu UI unavailable (%s) - memory back; waiting for Album/SwitchU (100D) or a game",
+                                        LogLine("   live: home_menu UI unavailable (%s) - capture soft-freed; open Album/SwitchU and engines will fully unmap, or return to a game",
                                                 ui_why != nullptr ? ui_why : "?");
                                         said_ui_album = true;
                                     }
@@ -3622,17 +3622,10 @@ namespace ams::mitm::applet {
                                 CaptureRelease("live");
                             }
                             if (g_ind_buf == nullptr && g_capture_handles == 0) {
-                                if (g_ui_stream_armed) {
-                                    g_applet_needs_memory.store(false, std::memory_order_relaxed);
-                                    LogLine("   live: home confirmed (%s) after %llu ms - memory back; staying live for HOME menu / Album / SwitchU",
-                                            home_why != nullptr ? home_why : "?", static_cast<unsigned long long>(age_ms));
-                                    said_wait_game = false;
-                                    hidden_since_ns = 0;
-                                    said_hidden_wait = false;
-                                    os::SleepThread(TimeSpan::FromMilliSeconds(200));
-                                    continue;
-                                }
-                                LogLine("   live: home confirmed (%s) after %llu ms not presenting - closing the engines, memory back to the system",
+                                g_applet_needs_memory.store(false, std::memory_order_relaxed);
+                                /* Soft-free kept the donor mapped; close engines so
+                                 * HOME / Album / SwitchU are not fighting ~41 MB. */
+                                LogLine("   live: home confirmed (%s) after %llu ms - closing the engines, memory back to the system",
                                         home_why != nullptr ? home_why : "?", static_cast<unsigned long long>(age_ms));
                                 return;
                             }
@@ -3662,17 +3655,7 @@ namespace ams::mitm::applet {
                             CaptureRelease("live");
                         }
                         if (g_ind_buf == nullptr && g_capture_handles == 0) {
-                            if (g_ui_stream_armed) {
-                                g_applet_needs_memory.store(false, std::memory_order_relaxed);
-                                static bool said_no_game_ui = false;
-                                if (!said_no_game_ui) {
-                                    LogLine("   live: no game - memory back; staying live for HOME menu / Album / SwitchU");
-                                    said_no_game_ui = true;
-                                }
-                                said_wait_game = false;
-                                os::SleepThread(TimeSpan::FromMilliSeconds(300));
-                                continue;
-                            }
+                            g_applet_needs_memory.store(false, std::memory_order_relaxed);
                             LogLine("   live: no game - closing the engines, memory back to the system");
                             return;
                         }

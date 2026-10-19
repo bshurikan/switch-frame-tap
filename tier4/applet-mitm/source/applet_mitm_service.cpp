@@ -257,6 +257,9 @@ namespace ams::mitm::applet {
                 LogLine("    (no NvGraphicBuffer magic found in %zu-byte parcel)", parcel_in.GetSize());
             }
         }
+        if (code == 11 && album) {
+            g_applet_target_pid.store(0, std::memory_order_relaxed);
+        }
 
         /* queueBuffer (7): the frame is now rendered and its swapchain slot is
          * the first int32 of the parcel payload. Once the game has presented a

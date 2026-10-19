@@ -26,6 +26,8 @@ namespace ams::mitm::applet {
      * the keyboard has its own message (beside System Settings it always
      * pauses the stream) */
     bool KeyboardHoldsStream();
+    /* Stock Album / SwitchU replace qlaunch as 010000000000100D. */
+    bool AlbumSwitchURunning();
 
     /* Set when an applet starts while the donor's memory is in use: the
      * stream stops and the memory goes back at once (the browser's big
