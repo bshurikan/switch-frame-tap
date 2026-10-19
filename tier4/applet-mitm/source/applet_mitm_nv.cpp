@@ -1650,9 +1650,9 @@ namespace ams::mitm::applet {
                 /* SwitchU home should stream like stock HOME - right away, not
                  * only after leaving an app. It leaves ~40 MB free; AppletBusy
                  * wants ~78. Allow a slim donor when 100D is up and MinDonor fits. */
-                if (busy && g_ui_stream_armed && AlbumSwitchURunning()) {
+                if (busy && g_ui_stream_armed && (AlbumSwitchURunning() || SlimForAlbum())) {
                     const u64 free_mb = AppletFreeMb();
-                    if (free_mb >= 30) {
+                    if (free_mb >= 30 && AlbumSwitchURunning()) {
                         static bool said_slim = false;
                         if (!said_slim) {
                             LogLine("   engines: Album/SwitchU up with %llu MB free - slim donor for capture (not waiting for it to close)",
@@ -1662,6 +1662,14 @@ namespace ams::mitm::applet {
                         busy = false;
                         /* Donor already freed for 100D - do not sit on a HOME hold. */
                         if (hold) { ClearHomeHold(); hold = false; }
+                    } else if (SlimForAlbum() && !AlbumSwitchURunning()) {
+                        /* Handoff window: do not fall through to a full game donor. */
+                        busy = true;
+                        VicStage("vb:wait_100d");
+                        SetViewerReason(ViewerReason_Starting);
+                        if (hold) { ClearHomeHold(); hold = false; }
+                        os::SleepThread(TimeSpan::FromMilliSeconds(100));
+                        continue;
                     }
                 }
                 if (!hold && !busy) { break; }
@@ -1672,10 +1680,10 @@ namespace ams::mitm::applet {
                 if (!said_busy) { LogLine("   engines: %s - waiting for it to close", hold ? "an applet is starting" : "an applet holds the Applet pool"); said_busy = true; }
                 VicStage("vb:applet_busy");
                 SetViewerReason(ViewerReason_AppletOpen);
-                /* Fast poll while SwitchU is up - 2 s sleeps made the viewer
-                 * waiting screen linger after the pool was already free enough. */
+                /* Fast poll while SwitchU handoff / up - 2 s sleeps made the
+                 * viewer waiting screen linger after the pool was free enough. */
                 os::SleepThread(TimeSpan::FromMilliSeconds(
-                    (g_ui_stream_armed && AlbumSwitchURunning()) ? 100 : 2000));
+                    (g_ui_stream_armed && (AlbumSwitchURunning() || SlimForAlbum())) ? 100 : 2000));
             }
             g_applet_needs_memory.store(false, std::memory_order_relaxed);
             SetViewerReason(ViewerReason_Starting);
@@ -1688,9 +1696,13 @@ namespace ams::mitm::applet {
          * donor is not installed): wait and try again, not give up for the boot */
         if (!(g_live_armed && g_release_mode)) { return; }
         if (TakeShotRequest()) { NotifyShot("Screenshot failed: not enough memory free"); }
-        if (heap_fails % 12 == 0) { LogLine("   engines: no streaming memory - trying again in 5 s"); }
+        /* 100D handoff: retry quickly (DonorObtain returns false until ~30 MB free). */
+        const bool handoff = SlimForAlbum();
+        if (heap_fails % (handoff ? 50 : 12) == 0) {
+            LogLine("   engines: no streaming memory - trying again in %s", handoff ? "100 ms" : "5 s");
+        }
         SetViewerReason(ViewerReason_NoMemory);
-        os::SleepThread(TimeSpan::FromSeconds(5));
+        os::SleepThread(handoff ? TimeSpan::FromMilliSeconds(100) : TimeSpan::FromSeconds(5));
         }
         /* the test paths (no live mode, or the colour sweep) use the capture
          * region from here on, for the whole boot, as before v0.7.10 */
@@ -2971,6 +2983,7 @@ namespace ams::mitm::applet {
                             CaptureRelease("live");
                         }
                         ClearHomeHold();
+                        SetSlimForAlbum(true);   /* remount slim only - no full donor into HOME gap */
                         g_applet_needs_memory.store(false, std::memory_order_relaxed);
                         LogLine("   live: Album/SwitchU (100D) is up - closing engines so it gets the Applet pool (donor %llu MB, free %llu MB)",
                                 static_cast<unsigned long long>(donor_mb), static_cast<unsigned long long>(free_mb));
@@ -3054,6 +3067,7 @@ namespace ams::mitm::applet {
                             }
                             if (g_ind_buf == nullptr && g_capture_handles == 0) {
                                 g_applet_needs_memory.store(false, std::memory_order_relaxed);
+                                SetSlimForAlbum(true);   /* prefer slim if 100D comes up next */
                                 static bool said_ui_album = false;
                                 if (!said_ui_album) {
                                     LogLine("   live: home_menu UI unavailable (%s) - capture soft-freed; open Album/SwitchU and engines will fully unmap, or return to a game",
@@ -3061,7 +3075,7 @@ namespace ams::mitm::applet {
                                     said_ui_album = true;
                                 }
                                 said_wait_game = false;
-                                os::SleepThread(TimeSpan::FromMilliSeconds(200));
+                                os::SleepThread(TimeSpan::FromMilliSeconds(100));
                                 continue;
                             }
                         }
@@ -3085,6 +3099,13 @@ namespace ams::mitm::applet {
                                 CaptureRelease("live");
                             }
                             if (g_ind_buf == nullptr && g_capture_handles == 0) {
+                                /* Mid 100D handoff: do not fallback-close again
+                                 * (that remounted a full donor into a black gap). */
+                                if (SlimForAlbum()) {
+                                    said_wait_game = false;
+                                    os::SleepThread(TimeSpan::FromMilliSeconds(100));
+                                    continue;
+                                }
                                 ClearHomeHold();
                                 g_applet_needs_memory.store(false, std::memory_order_relaxed);
                                 /* Soft-free kept the donor mapped; close engines so
@@ -3167,7 +3188,11 @@ namespace ams::mitm::applet {
                     geo = src_surface;
                     if (gen == src_surface.generation) { break; }
                 }
-                if (applet_target) { LogLine("   live[%u]: the Album / hbmenu is in front (pid %llu)", sessions, static_cast<unsigned long long>(pid.value)); }
+                if (applet_target) {
+                    LogLine("   live[%u]: the Album / hbmenu is in front (pid %llu)", sessions, static_cast<unsigned long long>(pid.value));
+                } else {
+                    SetSlimForAlbum(false);   /* back to a game - full donor on next remount */
+                }
                 u64 slot_base = 0;
                 const u64 f0 = armTicksToNs(armGetSystemTick());
                 const bool found = LocateSwapchain(dbg, geo, std::addressof(slot_base), "live");
