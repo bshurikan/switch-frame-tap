@@ -2976,17 +2976,24 @@ namespace ams::mitm::applet {
                     }
                     /* home_menu kept the donor through game-session end for UI.
                      * UI could not start (no vi buffer, etc.): free it now so
-                     * SwitchU/Album is not racing ~42 MB, and hold re-setup so
-                     * a connected viewer does not remount mid-handoff. */
+                     * SwitchU/Album is not racing ~42 MB, hold remount, but
+                     * stay in RunLive - Album/hbmenu/SwitchU presents attach
+                     * like a game once 100D is up (home_menu path). */
                     if (g_donor_mode && g_detach_on_home && g_ui_stream_armed) {
                         const char *ui_why = nullptr;
                         if (HomeDetachShouldFire(50, g_home_detach_ms, g_home_fallback_ms, std::addressof(ui_why))) {
                             PrepareForHomeMenu();
                             CaptureRelease("live");
                             if (g_ind_buf == nullptr && g_capture_handles == 0) {
-                                LogLine("   live: home_menu UI unavailable (%s) - closing the engines, memory back for HOME/Album",
-                                        ui_why != nullptr ? ui_why : "?");
-                                return;
+                                static bool said_ui_album = false;
+                                if (!said_ui_album) {
+                                    LogLine("   live: home_menu UI unavailable (%s) - memory back; waiting for Album/SwitchU (100D) or a game",
+                                            ui_why != nullptr ? ui_why : "?");
+                                    said_ui_album = true;
+                                }
+                                said_wait_game = false;
+                                os::SleepThread(TimeSpan::FromMilliSeconds(200));
+                                continue;
                             }
                         }
                     }
@@ -3007,6 +3014,15 @@ namespace ams::mitm::applet {
                             PrepareForHomeMenu();
                             CaptureRelease("live");
                             if (g_ind_buf == nullptr && g_capture_handles == 0) {
+                                if (g_ui_stream_armed) {
+                                    LogLine("   live: home confirmed (%s) after %llu ms - memory back; staying live for HOME menu / Album / SwitchU",
+                                            home_why != nullptr ? home_why : "?", static_cast<unsigned long long>(age_ms));
+                                    said_wait_game = false;
+                                    hidden_since_ns = 0;
+                                    said_hidden_wait = false;
+                                    os::SleepThread(TimeSpan::FromMilliSeconds(200));
+                                    continue;
+                                }
                                 LogLine("   live: home confirmed (%s) after %llu ms not presenting - closing the engines, memory back to the system",
                                         home_why != nullptr ? home_why : "?", static_cast<unsigned long long>(age_ms));
                                 return;
@@ -3026,6 +3042,16 @@ namespace ams::mitm::applet {
                         PrepareForHomeMenu();
                         CaptureRelease("live");
                         if (g_ind_buf == nullptr && g_capture_handles == 0) {
+                            if (g_ui_stream_armed) {
+                                static bool said_no_game_ui = false;
+                                if (!said_no_game_ui) {
+                                    LogLine("   live: no game - memory back; staying live for HOME menu / Album / SwitchU");
+                                    said_no_game_ui = true;
+                                }
+                                said_wait_game = false;
+                                os::SleepThread(TimeSpan::FromMilliSeconds(300));
+                                continue;
+                            }
                             LogLine("   live: no game - closing the engines, memory back to the system");
                             return;
                         }

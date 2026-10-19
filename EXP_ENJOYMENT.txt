@@ -1,0 +1,38 @@
+exp/enjoyment (kitchen-sink local soak)
+=======================================
+
+What it is
+----------
+origin/master plus our open PRs, for hardware soak only - not a PR branch.
+
+Included
+--------
+- #19 exp/net-ethernet (mid-join IDR, wired GOP 60; TcpTxMax 200 after review)
+- #21 exp/home-detach-confirm (HOME confirm; shm-only HOME watch, 100 ms poll)
+- #18 exp/viewer-window-chrome (borderless / responsive Windows viewer)
+- Local: when home_menu is on but vi HOME UI cannot start, stay in live
+  and wait for Album / SwitchU (100D) presents instead of exiting RunLive.
+
+Build
+-----
+  build_enjoyment.bat
+  Output: E:\Desktop\SwitchU\- Switch Frame Tap -\build\sd_out
+
+SwitchU menu soak
+-----------------
+config.ini: home_menu = 1  (reboot after change)
+detach_on_home = 1
+
+Expect log lines:
+  home: detach (HOME button)...
+  live-ui: vi's shared buffer not found  (OK on some consoles)
+  live: home_menu UI unavailable ... waiting for Album/SwitchU (100D)
+  live[N]: the Album / hbmenu is in front (pid ...)
+
+Rebuild enjoyment when master or a PR branch moves:
+  git checkout exp/enjoyment
+  git reset --hard origin/master
+  git merge --no-ff fork/exp/net-ethernet
+  git merge --no-ff fork/exp/home-detach-confirm
+  git merge --no-ff fork/exp/viewer-window-chrome
+  (re-apply local SwitchU wait spike if needed)
