@@ -420,8 +420,13 @@ namespace ams::mitm::applet {
         const u64 t0 = armTicksToNs(armGetSystemTick());
         /* Keep engines from remounting the donor while SwitchU / Album inits.
          * Viewer may still be connected; without this hold RunVicBlit sets up
-         * again immediately and the first Album launch OOMs. */
-        g_hold_until_ns.store(t0 + 5'000'000'000ull, std::memory_order_relaxed);
+         * again immediately and the first Album launch OOMs.
+         * Do not refresh an active hold - callers that loop would otherwise
+         * extend it forever (black screen, never attach to 100D). */
+        const u64 until = t0 + 5'000'000'000ull;
+        const u64 prev = g_hold_until_ns.load(std::memory_order_relaxed);
+        if (prev > t0) { return; }
+        g_hold_until_ns.store(until, std::memory_order_relaxed);
         g_trigger_ns = t0;
         g_applet_needs_memory.store(true, std::memory_order_relaxed);
         LogLine("home: detach-on-home - release capture memory for home menu (no engine re-setup for 5 s)");
