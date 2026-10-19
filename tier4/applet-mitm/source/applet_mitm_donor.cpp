@@ -80,11 +80,12 @@ namespace ams::mitm::applet {
         constexpr u32 MinDonorMb = 30, FullDonorMb = 42;
         constinit std::atomic<u32> g_cap_mb{FullDonorMb};
 
-        u64 AppletFreeMb() {
-            u64 cur = 0, lim = 0;
-            if (R_FAILED(::ams::pm::dmnt::AtmosphereGetCurrentLimitInfo(std::addressof(cur), std::addressof(lim), ::ams::pm::ResourceLimitGroup_Applet, svc::LimitableResource_PhysicalMemoryMax))) { return 0; }
-            return (lim - cur) >> 20;
-        }
+    }
+
+    u64 AppletFreeMb() {
+        u64 cur = 0, lim = 0;
+        if (R_FAILED(::ams::pm::dmnt::AtmosphereGetCurrentLimitInfo(std::addressof(cur), std::addressof(lim), ::ams::pm::ResourceLimitGroup_Applet, svc::LimitableResource_PhysicalMemoryMax))) { return 0; }
+        return (lim - cur) >> 20;
     }
 
     u32 DonorCapMb() { return g_cap_mb.load(std::memory_order_relaxed); }
@@ -116,7 +117,9 @@ namespace ams::mitm::applet {
                 const bool tight = (lim >> 20) - mb < TightMb;
                 bool web = false;
                 if (mb >= checked_mb + 32 || tight) { checked_mb = mb; web = WebAppletRunning(); }
-                const bool trigger = web || tight;
+                /* SwitchU/Album fills the pool by design; a slim capture donor
+                 * beside it is intentional - do not tear the stream down. */
+                const bool trigger = web || (tight && !AlbumSwitchURunning());
                 if (trigger) {
                     LogDefer(true);   /* written once the memory is back (DonorRelease) */
                     g_trigger_ns = armTicksToNs(armGetSystemTick());
@@ -287,9 +290,12 @@ namespace ams::mitm::applet {
             u32 cap = FullDonorMb;
             {
                 const u64 free_mb = AppletFreeMb();
-                const u64 room = free_mb > TightMb ? free_mb - TightMb : 0;
+                /* Beside SwitchU (~424 MB) only ~40 MB remains - leave a small
+                 * margin and take a slim donor so we can still attach to 100D. */
+                const u64 margin = AlbumSwitchURunning() ? 8 : TightMb;
+                const u64 room = free_mb > margin ? free_mb - margin : 0;
                 cap = room >= FullDonorMb ? FullDonorMb : (room >= MinDonorMb ? static_cast<u32>(room) : MinDonorMb);
-                if (cap < FullDonorMb) { LogLine("donor: the Applet pool has %llu MB free - taking at most %u MB", static_cast<unsigned long long>(free_mb), cap); }
+                if (cap < FullDonorMb) { LogLine("donor: the Applet pool has %llu MB free - taking at most %u MB%s", static_cast<unsigned long long>(free_mb), cap, AlbumSwitchURunning() ? " (slim for Album/SwitchU)" : ""); }
             }
             g_cap_mb.store(cap, std::memory_order_relaxed);
             {
