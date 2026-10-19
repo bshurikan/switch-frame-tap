@@ -435,6 +435,10 @@ namespace ams::mitm::applet {
         LogLine("home: detach-on-home - release capture memory for home menu (no engine re-setup for 5 s)");
     }
 
+    void ClearHomeHold() {
+        g_hold_until_ns.store(0, std::memory_order_relaxed);
+    }
+
     void StartAppletWatch() {
         const s32 prio = os::GetThreadPriority(os::GetCurrentThread());
         if (R_FAILED(os::CreateThread(std::addressof(g_watch_thread), AppletWatchThread, nullptr, g_watch_stack, sizeof(g_watch_stack), prio))) {

@@ -44,6 +44,8 @@ namespace ams::mitm::applet {
      * stream to give the donor's memory back immediately and hold engine
      * re-setup for a few seconds so Album is not racing a 42 MB remount. */
     void PrepareForHomeMenu();
+    /* Drop an active remount hold (e.g. after donor is fully unmapped for 100D). */
+    void ClearHomeHold();
     /* v0.7.16: a web applet (browser, eShop, manuals, OfflineWeb) is running */
     bool WebAppletOpen();
     bool AppletHoldActive();

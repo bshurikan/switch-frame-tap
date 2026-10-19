@@ -2042,7 +2042,7 @@ namespace ams::mitm::applet {
                     os::SleepThread(TimeSpan::FromMilliSeconds(500));
                 }
                 u64 mb = 0;
-                const bool hold = AppletHoldActive();
+                bool hold = AppletHoldActive();
                 bool busy = AppletBusy(std::addressof(mb));
                 /* SwitchU home should stream like stock HOME - right away, not
                  * only after leaving an app. It leaves ~40 MB free; AppletBusy
@@ -2057,6 +2057,8 @@ namespace ams::mitm::applet {
                             said_slim = true;
                         }
                         busy = false;
+                        /* Donor already freed for 100D - do not sit on a HOME hold. */
+                        if (hold) { ClearHomeHold(); hold = false; }
                     }
                 }
                 if (!hold && !busy) { break; }
@@ -2067,7 +2069,9 @@ namespace ams::mitm::applet {
                 if (!said_busy) { LogLine("   engines: %s - waiting for it to close", hold ? "an applet is starting" : "an applet holds the Applet pool"); said_busy = true; }
                 VicStage("vb:applet_busy");
                 SetViewerReason(KeyboardHoldsStream() ? ViewerReason_Keyboard : ViewerReason_AppletOpen);
-                os::SleepThread(TimeSpan::FromMilliSeconds(250));   /* v0.7.16: was 2 s - up to 2 s more before the picture after every applet */
+                /* Fast poll while SwitchU is up; otherwise v0.7.16's 250 ms. */
+                os::SleepThread(TimeSpan::FromMilliSeconds(
+                    (g_ui_stream_armed && AlbumSwitchURunning()) ? 100 : 250));
             }
             g_applet_needs_memory.store(false, std::memory_order_relaxed);
             SetViewerReason(ViewerReason_Starting);
@@ -2346,8 +2350,12 @@ namespace ams::mitm::applet {
             /* Once the VIC stops completing it is wedged; further submits achieve
              * nothing and keep the compositor starved. Stop at the first failure. */
 
-            /* 1. Control: known good since M16. */
-            if (!RunOneJob("vb:job_fill", VicJob::Fill, true, ctx)) {
+            /* Live remounts (game <-> SwitchU handoff) skip the diagnostic
+             * fill/blit - they only prove the VIC; streaming does not need them
+             * and they add ~1 s to every handoff waiting screen. */
+            if (g_live_armed) {
+                VicStage("vb:probes_skipped_live");
+            } else if (!RunOneJob("vb:job_fill", VicJob::Fill, true, ctx)) {
                 LogLine("   fill did not complete - engine wedged, skipping the rest");
                 VicStage("vb:ABORTED_after_fill");
             } else if (self_addr == 0) {
@@ -2361,7 +2369,7 @@ namespace ams::mitm::applet {
 
             /* The game's buffer stays out of reach: its handle pins to phys=0
              * three different ways, and RunOneJob now refuses zero addresses. */
-            if (src_addr == 0) {
+            if (!g_live_armed && src_addr == 0) {
                 LogLine("   game blit still not possible: handle pins to phys=0");
                 VicStage("vb:game_blit_SKIPPED");
             }
@@ -3498,6 +3506,7 @@ namespace ams::mitm::applet {
                         CaptureRelease("live");
                     }
                     if (g_ind_buf == nullptr && g_capture_handles == 0) {
+                        ClearHomeHold();
                         g_applet_needs_memory.store(false, std::memory_order_relaxed);
                         LogLine("   live: an applet needs the memory - closing the engines now");
                         return;
@@ -3505,15 +3514,17 @@ namespace ams::mitm::applet {
                 }
                 /* 100D up with a full game donor still mapped: free so SwitchU
                  * can finish launching. A slim donor remounted for capture
-                 * (donor_mb < 40) stays - attach below. */
+                 * (donor_mb < 40) stays - attach below. No PrepareForHomeMenu
+                 * hold here: donor is about to unmap; a 2.5 s hold only delays
+                 * the slim remount (viewer waiting screen). */
                 if (g_donor_mode && g_ui_stream_armed && DonorActive() && AlbumSwitchURunning()) {
                     const u64 free_mb = AppletFreeMb();
                     const u64 donor_mb = g_vic_heap_size >> 20;
                     if (donor_mb >= 40) {
                         if (g_ind_buf != nullptr || g_capture_handles != 0) {
-                            PrepareForHomeMenu();
                             CaptureRelease("live");
                         }
+                        ClearHomeHold();
                         g_applet_needs_memory.store(false, std::memory_order_relaxed);
                         LogLine("   live: Album/SwitchU (100D) is up - closing engines so it gets the Applet pool (donor %llu MB, free %llu MB)",
                                 static_cast<unsigned long long>(donor_mb), static_cast<unsigned long long>(free_mb));
@@ -3645,6 +3656,7 @@ namespace ams::mitm::applet {
                                 CaptureRelease("live");
                             }
                             if (g_ind_buf == nullptr && g_capture_handles == 0) {
+                                ClearHomeHold();
                                 g_applet_needs_memory.store(false, std::memory_order_relaxed);
                                 /* Soft-free kept the donor mapped; close engines so
                                  * HOME / Album / SwitchU are not fighting ~41 MB. */
@@ -3678,6 +3690,7 @@ namespace ams::mitm::applet {
                             CaptureRelease("live");
                         }
                         if (g_ind_buf == nullptr && g_capture_handles == 0) {
+                            ClearHomeHold();
                             g_applet_needs_memory.store(false, std::memory_order_relaxed);
                             LogLine("   live: no game - closing the engines, memory back to the system");
                             return;
