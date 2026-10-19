@@ -51,6 +51,10 @@ namespace ams::mitm::applet {
     }
 
     constinit std::atomic<bool> g_applet_needs_memory{false};
+    constinit std::atomic<bool> g_slim_for_album{false};
+
+    void SetSlimForAlbum(bool on) { g_slim_for_album.store(on, std::memory_order_relaxed); }
+    bool SlimForAlbum() { return g_slim_for_album.load(std::memory_order_relaxed); }
 
     namespace {
         /* v0.7.14: the applets that end up needing (nearly) the whole Applet
@@ -346,8 +350,11 @@ namespace ams::mitm::applet {
                     web = (free_mb < WebRoomMb || mb >= base_mb + 24) && WebAppletRunning();
                 }
                 /* SwitchU/Album fills the pool by design; a slim capture donor
-                 * beside it is intentional - do not tear the stream down. */
-                const bool trigger = web || spawned || (tight && !AlbumSwitchURunning());
+                 * (< 40 MB) beside it is intentional - do not tear it down.
+                 * Also ignore tight during the 100D handoff window (100D can
+                 * briefly disappear from GetProcessId while still launching). */
+                const bool slim_ok = donor_mb < 40 || g_slim_for_album.load(std::memory_order_relaxed);
+                const bool trigger = web || spawned || (tight && !AlbumSwitchURunning() && !slim_ok);
                 if (trigger) {
                     LogDefer(true);   /* written once the memory is back (DonorRelease) */
                     g_trigger_ns = armTicksToNs(armGetSystemTick());
@@ -564,21 +571,33 @@ namespace ams::mitm::applet {
             {
                 const u64 free_mb = AppletFreeMb();
                 const Beside &beside = BesideNow(free_mb);
-                /* Beside SwitchU (~424 MB) only ~40 MB remains - leave a small
-                 * margin and take a slim donor so we can still attach to 100D. */
-                const u64 take_mb = AlbumSwitchURunning() ? 8 : beside.take_mb;
+                /* Beside SwitchU (~424 MB) only ~40 MB remains. During the 100D
+                 * handoff window never grab a full 41 MB donor into the HOME
+                 * gap (that was the black-screen thrash). */
+                const bool slim = AlbumSwitchURunning() || g_slim_for_album.load(std::memory_order_relaxed);
+                const u64 take_mb = slim ? 8 : beside.take_mb;
                 const u64 room = free_mb > take_mb ? free_mb - take_mb : 0;
-                cap = room >= FullDonorMb ? FullDonorMb : (room >= MinDonorMb ? static_cast<u32>(room) : MinDonorMb);
-                if (cap < FullDonorMb) {
-                    if (AlbumSwitchURunning()) {
-                        LogLine("donor: the Applet pool has %llu MB free - taking at most %u MB (slim for Album/SwitchU)",
-                                static_cast<unsigned long long>(free_mb), cap);
-                    } else if (beside.what != nullptr) {
-                        LogLine("donor: the Applet pool has %llu MB free - taking at most %u MB (%s is open: %llu MB are left beside it, the stream stops under %llu)",
-                                static_cast<unsigned long long>(free_mb), cap, beside.what,
-                                static_cast<unsigned long long>(beside.take_mb), static_cast<unsigned long long>(beside.stop_mb));
-                    } else {
-                        LogLine("donor: the Applet pool has %llu MB free - taking at most %u MB", static_cast<unsigned long long>(free_mb), cap);
+                if (slim) {
+                    if (room < MinDonorMb) {
+                        LogLine("donor: Album/SwitchU handoff - only %llu MB free (need %u) - waiting",
+                                static_cast<unsigned long long>(free_mb), MinDonorMb);
+                        return false;
+                    }
+                    cap = room >= FullDonorMb ? (FullDonorMb - 1) : static_cast<u32>(room); /* keep < 40 so watch treats us as slim */
+                    if (cap > 36) { cap = 36; }
+                    LogLine("donor: the Applet pool has %llu MB free - taking at most %u MB (slim for Album/SwitchU)",
+                            static_cast<unsigned long long>(free_mb), cap);
+                } else {
+                    cap = room >= FullDonorMb ? FullDonorMb : (room >= MinDonorMb ? static_cast<u32>(room) : MinDonorMb);
+                    if (cap < FullDonorMb) {
+                        if (beside.what != nullptr) {
+                            LogLine("donor: the Applet pool has %llu MB free - taking at most %u MB (%s is open: %llu MB are left beside it, the stream stops under %llu)",
+                                    static_cast<unsigned long long>(free_mb), cap, beside.what,
+                                    static_cast<unsigned long long>(beside.take_mb), static_cast<unsigned long long>(beside.stop_mb));
+                        } else {
+                            LogLine("donor: the Applet pool has %llu MB free - taking at most %u MB",
+                                    static_cast<unsigned long long>(free_mb), cap);
+                        }
                     }
                 }
             }

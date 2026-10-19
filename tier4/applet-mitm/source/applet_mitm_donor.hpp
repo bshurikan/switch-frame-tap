@@ -30,6 +30,11 @@ namespace ams::mitm::applet {
     bool AlbumSwitchURunning();
     /* Applet-pool free MB (0 if the query fails). */
     u64 AppletFreeMb();
+    /* After freeing a game donor for 100D: prefer slim remount, do not take a
+     * full 41 MB donor into the HOME gap (black-screen thrash). Cleared when
+     * a real game attach starts. */
+    void SetSlimForAlbum(bool on);
+    bool SlimForAlbum();
 
     /* Set when an applet starts while the donor's memory is in use: the
      * stream stops and the memory goes back at once (the browser's big
