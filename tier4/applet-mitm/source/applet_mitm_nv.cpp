@@ -2861,6 +2861,16 @@ namespace ams::mitm::applet {
             static const char *const names[] = { "done", "a game is on screen", "the viewer went away", "NVENC stalled", "failed",
                                                  "restarting (new settings or a game's new buffers)", "turned off from the overlay" };
             LogLine("   live[%u]: HOME-menu session ended - %s; detached from vi", sessions, names[static_cast<int>(end)]);
+            /* Album/SwitchU (or any applet) ending the HOME UI stream needs the
+             * donor back before we try to attach to 100D like a game. */
+            if (g_donor_mode && (end == StreamEnd::GameGone || end == StreamEnd::Disabled) &&
+                (g_applet_target_pid.load(std::memory_order_relaxed) != 0 ||
+                 g_applet_needs_memory.load(std::memory_order_relaxed))) {
+                PrepareForHomeMenu();
+                CaptureRelease("live-ui");
+                LogLine("   live-ui: donor freed for Album/SwitchU handoff (applet pid %llu)",
+                        static_cast<unsigned long long>(g_applet_target_pid.load(std::memory_order_relaxed)));
+            }
             if (end == StreamEnd::Failed) { os::SleepThread(TimeSpan::FromSeconds(5)); }
             return true;
         }
@@ -2905,10 +2915,27 @@ namespace ams::mitm::applet {
                     SetViewerReason(ViewerReason_Wedged);
                     for (;;) { static_cast<void>(UsbViewerPresent(300)); os::SleepThread(TimeSpan::FromSeconds(2)); }
                 }
-                /* v0.7.10: an applet is starting - give the donor's memory back now */
+                /* v0.7.10: an applet is starting - give the donor's memory back now.
+                 * With home_menu on, stay in RunLive: Album/SwitchU (100D) presents
+                 * attach next. Returning here was why SwitchU never streamed after
+                 * a working HOME-menu session. */
                 if (g_applet_needs_memory.load(std::memory_order_relaxed) && g_donor_mode) {
+                    PrepareForHomeMenu();
                     CaptureRelease("live");
-                    if (g_ind_buf == nullptr && g_capture_handles == 0) { LogLine("   live: an applet needs the memory - closing the engines now"); return; }
+                    if (g_ind_buf == nullptr && g_capture_handles == 0) {
+                        if (g_ui_stream_armed) {
+                            static bool said_applet_ui = false;
+                            if (!said_applet_ui) {
+                                LogLine("   live: an applet needs the memory - freed; staying live for Album/SwitchU / HOME menu");
+                                said_applet_ui = true;
+                            }
+                            said_wait_game = false;
+                            os::SleepThread(TimeSpan::FromMilliSeconds(200));
+                            continue;
+                        }
+                        LogLine("   live: an applet needs the memory - closing the engines now");
+                        return;
+                    }
                 }
                 UsbFollowStreamSwitch();
                 /* M99: a screenshot while not streaming: attach just for it */
@@ -6641,7 +6668,22 @@ namespace ams::mitm::applet {
                 if (!g_stream_enabled.load(std::memory_order_relaxed)) { why = "turned off from the overlay"; end = StreamEnd::Disabled; break; }
                 if (g_reconfig_request.exchange(false, std::memory_order_relaxed)) { why = "new settings from the manager app"; end = StreamEnd::Reconfigure; break; }
                 if (g_app_excluded.load(std::memory_order_relaxed)) { why = "this app was excluded"; end = StreamEnd::Disabled; break; }
-                if (g_ui_session_active.load(std::memory_order_relaxed) && g_game_presented_in_ui.load(std::memory_order_relaxed)) { why = "a game is on screen"; end = StreamEnd::GameGone; break; }   /* v0.7.14 */
+                if (g_ui_session_active.load(std::memory_order_relaxed) && g_game_presented_in_ui.load(std::memory_order_relaxed)) {
+                    why = (g_applet_target_pid.load(std::memory_order_relaxed) != 0) ? "Album/SwitchU is on screen" : "a game is on screen";
+                    end = StreamEnd::GameGone;
+                    break;
+                }
+                if (g_ui_session_active.load(std::memory_order_relaxed)) {
+                    static constexpr u64 AlbumProgramId = 0x010000000000100Dull;
+                    os::ProcessId album{};
+                    if (R_SUCCEEDED(::ams::pm::dmnt::GetProcessId(std::addressof(album), ncm::ProgramId{AlbumProgramId}))) {
+                        why = "Album/SwitchU opening";
+                        LogLine("home: Album/SwitchU 100D up (pid %llu) during HOME UI - handing off",
+                                static_cast<unsigned long long>(album.value));
+                        end = StreamEnd::GameGone;
+                        break;
+                    }
+                }
                 if (g_detach_on_home && !g_ui_session_active.load(std::memory_order_relaxed)) {
                     const u64 qt = g_queue_tick.load(std::memory_order_relaxed);
                     if (qt != 0) {
@@ -7096,9 +7138,25 @@ namespace ams::mitm::applet {
                 /* exp/detach-on-home: present stall is a probe only - loads also
                  * pause queueBuffer. Detach when HOME button / Album / applet
                  * confirms, or after home_fallback_ms. */
-                /* v0.7.14: streaming the HOME menu and a game comes to the front */
+                /* v0.7.14: streaming the HOME menu and a game / Album comes to the front */
                 if (live && g_ui_session_active.load(std::memory_order_relaxed) && g_game_presented_in_ui.load(std::memory_order_relaxed)) {
-                    why = "a game is on screen"; end = StreamEnd::GameGone; break;
+                    why = (g_applet_target_pid.load(std::memory_order_relaxed) != 0)
+                              ? "Album/SwitchU is on screen" : "a game is on screen";
+                    end = StreamEnd::GameGone;
+                    break;
+                }
+                /* HOME UI stream: Album/SwitchU process up before presents - free
+                 * donor early so 100D is not racing ~42 MB mid-launch. */
+                if (live && g_ui_session_active.load(std::memory_order_relaxed)) {
+                    static constexpr u64 AlbumProgramId = 0x010000000000100Dull;
+                    os::ProcessId album{};
+                    if (R_SUCCEEDED(::ams::pm::dmnt::GetProcessId(std::addressof(album), ncm::ProgramId{AlbumProgramId}))) {
+                        why = "Album/SwitchU opening";
+                        LogLine("home: Album/SwitchU 100D up (pid %llu) during HOME UI - handing off",
+                                static_cast<unsigned long long>(album.value));
+                        end = StreamEnd::GameGone;
+                        break;
+                    }
                 }
                 if (live && g_detach_on_home && !g_ui_session_active.load(std::memory_order_relaxed)) {
                     const u64 qt = g_queue_tick.load(std::memory_order_relaxed);
