@@ -28,6 +28,8 @@ namespace ams::mitm::applet {
     bool KeyboardHoldsStream();
     /* Stock Album / SwitchU replace qlaunch as 010000000000100D. */
     bool AlbumSwitchURunning();
+    /* Applet-pool free MB (0 if the query fails). */
+    u64 AppletFreeMb();
 
     /* Set when an applet starts while the donor's memory is in use: the
      * stream stops and the memory goes back at once (the browser's big

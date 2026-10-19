@@ -2043,7 +2043,23 @@ namespace ams::mitm::applet {
                 }
                 u64 mb = 0;
                 const bool hold = AppletHoldActive();
-                if (!hold && !AppletBusy(std::addressof(mb))) { break; }
+                bool busy = AppletBusy(std::addressof(mb));
+                /* SwitchU home should stream like stock HOME - right away, not
+                 * only after leaving an app. It leaves ~40 MB free; AppletBusy
+                 * wants ~78. Allow a slim donor when 100D is up and MinDonor fits. */
+                if (busy && g_ui_stream_armed && AlbumSwitchURunning()) {
+                    const u64 free_mb = AppletFreeMb();
+                    if (free_mb >= 30) {
+                        static bool said_slim = false;
+                        if (!said_slim) {
+                            LogLine("   engines: Album/SwitchU up with %llu MB free - slim donor for capture (not waiting for it to close)",
+                                    static_cast<unsigned long long>(free_mb));
+                            said_slim = true;
+                        }
+                        busy = false;
+                    }
+                }
+                if (!hold && !busy) { break; }
                 if (TakeShotRequest()) {
                     LogLine("shot: an applet holds the Applet pool (%llu MB) - no screenshot now", static_cast<unsigned long long>(mb));
                     NotifyShot(KeyboardHoldsStream() ? "No screenshot while the keyboard is open" : "No screenshot while a manual, the eShop or another applet is open");
@@ -3487,15 +3503,22 @@ namespace ams::mitm::applet {
                         return;
                     }
                 }
-                /* Same: 100D up while donor still mapped after a soft HOME free. */
+                /* 100D up with a full game donor still mapped: free so SwitchU
+                 * can finish launching. A slim donor remounted for capture
+                 * (donor_mb < 40) stays - attach below. */
                 if (g_donor_mode && g_ui_stream_armed && DonorActive() && AlbumSwitchURunning()) {
-                    if (g_ind_buf != nullptr || g_capture_handles != 0) {
-                        PrepareForHomeMenu();
-                        CaptureRelease("live");
+                    const u64 free_mb = AppletFreeMb();
+                    const u64 donor_mb = g_vic_heap_size >> 20;
+                    if (donor_mb >= 40) {
+                        if (g_ind_buf != nullptr || g_capture_handles != 0) {
+                            PrepareForHomeMenu();
+                            CaptureRelease("live");
+                        }
+                        g_applet_needs_memory.store(false, std::memory_order_relaxed);
+                        LogLine("   live: Album/SwitchU (100D) is up - closing engines so it gets the Applet pool (donor %llu MB, free %llu MB)",
+                                static_cast<unsigned long long>(donor_mb), static_cast<unsigned long long>(free_mb));
+                        return;
                     }
-                    g_applet_needs_memory.store(false, std::memory_order_relaxed);
-                    LogLine("   live: Album/SwitchU (100D) is up - closing engines so it gets the Applet pool (donor was still mapped)");
-                    return;
                 }
                 UsbFollowStreamSwitch();
                 /* M99: a screenshot while not streaming: attach just for it */
