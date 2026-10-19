@@ -40,6 +40,8 @@ namespace ams::mitm::applet {
      * stream to give the donor's memory back immediately and hold engine
      * re-setup (g_home_hold_ms) so Album is not racing a 42 MB remount. */
     void PrepareForHomeMenu();
+    /* Drop an active remount hold (e.g. after donor is fully unmapped for 100D). */
+    void ClearHomeHold();
     bool AppletHoldActive();
     void SetHomeHoldMs(u32 ms);
     /* Present stall alone is not HOME (loads pause queueBuffer too). Detach

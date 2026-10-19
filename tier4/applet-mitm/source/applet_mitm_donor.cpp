@@ -179,6 +179,10 @@ namespace ams::mitm::applet {
                 g_home_hold_ms_local);
     }
 
+    void ClearHomeHold() {
+        g_hold_until_ns.store(0, std::memory_order_relaxed);
+    }
+
     bool HomeDetachShouldFire(u64 stall_age_ms, u32 probe_ms, u32 fallback_ms, const char **out_reason) {
         if (probe_ms < 50) { probe_ms = 50; }
         if (fallback_ms < probe_ms) { fallback_ms = probe_ms; }
