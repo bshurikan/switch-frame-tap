@@ -22,6 +22,8 @@ namespace ams::mitm::applet {
      * eShop) - the donor must not take its memory now. out_mb: Applet group
      * memory in use. */
     bool AppletBusy(u64 *out_mb = nullptr);
+    /* Stock Album / SwitchU replace qlaunch as 010000000000100D. */
+    bool AlbumSwitchURunning();
 
     /* Set when an applet starts while the donor's memory is in use: the
      * stream stops and the memory goes back at once (the browser's big

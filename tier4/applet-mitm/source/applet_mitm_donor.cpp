@@ -271,6 +271,12 @@ namespace ams::mitm::applet {
         return WebAppletRunning() || (lim >> 20) - mb < MinDonorMb + TightMb;
     }
 
+    bool AlbumSwitchURunning() {
+        static constexpr u64 AlbumProgramId = 0x010000000000100Dull;
+        os::ProcessId album{};
+        return R_SUCCEEDED(::ams::pm::dmnt::GetProcessId(std::addressof(album), ncm::ProgramId{AlbumProgramId}));
+    }
+
     bool DonorObtain(uintptr_t *out_addr, size_t *out_size) {
         std::scoped_lock lk(g_lock);
         if (!g_mapped) {
