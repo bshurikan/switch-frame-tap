@@ -163,10 +163,13 @@ namespace ams::mitm::applet {
         /* Keep engines from remounting the donor while SwitchU / Album inits.
          * Viewer may still be connected; without this hold RunVicBlit sets up
          * again immediately and the first Album launch OOMs.
-         * Default 2.5 s (was 5 s) - long enough for Album settle, short enough
-         * that FT-off HOME stays snappy. */
+         * Default 2.5 s (was 5 s). Do not refresh an active hold - callers that
+         * loop would otherwise extend it forever (black screen). */
         const u64 hold_ns = static_cast<u64>(g_home_hold_ms_local) * UINT64_C(1000000);
-        g_hold_until_ns.store(t0 + hold_ns, std::memory_order_relaxed);
+        const u64 until = t0 + hold_ns;
+        const u64 prev = g_hold_until_ns.load(std::memory_order_relaxed);
+        if (prev > t0) { return; }
+        g_hold_until_ns.store(until, std::memory_order_relaxed);
         g_trigger_ns = t0;
         g_applet_needs_memory.store(true, std::memory_order_relaxed);
         LogLine("home: detach-on-home - release capture memory for home menu (no engine re-setup for %u ms)",

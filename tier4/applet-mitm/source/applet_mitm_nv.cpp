@@ -2916,14 +2916,19 @@ namespace ams::mitm::applet {
                     for (;;) { static_cast<void>(UsbViewerPresent(300)); os::SleepThread(TimeSpan::FromSeconds(2)); }
                 }
                 /* v0.7.10: an applet is starting - give the donor's memory back now.
-                 * With home_menu on, stay in RunLive: Album/SwitchU (100D) presents
-                 * attach next. Returning here was why SwitchU never streamed after
-                 * a working HOME-menu session. */
+                 * With home_menu on, stay in RunLive for Album/SwitchU. Only arm the
+                 * hold / release while capture is still mapped: PrepareForHomeMenu
+                 * sets g_applet_needs_memory, so calling it every loop extended the
+                 * remount hold forever (black screen, never attach to 100D). */
                 if (g_applet_needs_memory.load(std::memory_order_relaxed) && g_donor_mode) {
-                    PrepareForHomeMenu();
-                    CaptureRelease("live");
+                    const bool held = (g_ind_buf != nullptr || g_capture_handles != 0);
+                    if (held) {
+                        PrepareForHomeMenu();
+                        CaptureRelease("live");
+                    }
                     if (g_ind_buf == nullptr && g_capture_handles == 0) {
                         if (g_ui_stream_armed) {
+                            g_applet_needs_memory.store(false, std::memory_order_relaxed);
                             static bool said_applet_ui = false;
                             if (!said_applet_ui) {
                                 LogLine("   live: an applet needs the memory - freed; staying live for Album/SwitchU / HOME menu");
@@ -3009,9 +3014,13 @@ namespace ams::mitm::applet {
                     if (g_donor_mode && g_detach_on_home && g_ui_stream_armed) {
                         const char *ui_why = nullptr;
                         if (HomeDetachShouldFire(50, g_home_detach_ms, g_home_fallback_ms, std::addressof(ui_why))) {
-                            PrepareForHomeMenu();
-                            CaptureRelease("live");
+                            const bool held = (g_ind_buf != nullptr || g_capture_handles != 0);
+                            if (held) {
+                                PrepareForHomeMenu();
+                                CaptureRelease("live");
+                            }
                             if (g_ind_buf == nullptr && g_capture_handles == 0) {
+                                g_applet_needs_memory.store(false, std::memory_order_relaxed);
                                 static bool said_ui_album = false;
                                 if (!said_ui_album) {
                                     LogLine("   live: home_menu UI unavailable (%s) - memory back; waiting for Album/SwitchU (100D) or a game",
@@ -3037,11 +3046,14 @@ namespace ams::mitm::applet {
                         const u64 age_ms = (now_ns - hidden_since_ns) / UINT64_C(1000000);
                         const char *home_why = nullptr;
                         if (HomeDetachShouldFire(age_ms, g_home_detach_ms, g_home_fallback_ms, std::addressof(home_why))) {
-                            /* Always hold: UI is not running if we are releasing here. */
-                            PrepareForHomeMenu();
-                            CaptureRelease("live");
+                            const bool held = (g_ind_buf != nullptr || g_capture_handles != 0);
+                            if (held) {
+                                PrepareForHomeMenu();
+                                CaptureRelease("live");
+                            }
                             if (g_ind_buf == nullptr && g_capture_handles == 0) {
                                 if (g_ui_stream_armed) {
+                                    g_applet_needs_memory.store(false, std::memory_order_relaxed);
                                     LogLine("   live: home confirmed (%s) after %llu ms - memory back; staying live for HOME menu / Album / SwitchU",
                                             home_why != nullptr ? home_why : "?", static_cast<unsigned long long>(age_ms));
                                     said_wait_game = false;
@@ -3066,10 +3078,14 @@ namespace ams::mitm::applet {
                             continue;
                         }
                     } else if (g_donor_mode && g_detach_on_home && !have_app) {
-                        PrepareForHomeMenu();
-                        CaptureRelease("live");
+                        const bool held = (g_ind_buf != nullptr || g_capture_handles != 0);
+                        if (held) {
+                            PrepareForHomeMenu();
+                            CaptureRelease("live");
+                        }
                         if (g_ind_buf == nullptr && g_capture_handles == 0) {
                             if (g_ui_stream_armed) {
+                                g_applet_needs_memory.store(false, std::memory_order_relaxed);
                                 static bool said_no_game_ui = false;
                                 if (!said_no_game_ui) {
                                     LogLine("   live: no game - memory back; staying live for HOME menu / Album / SwitchU");
